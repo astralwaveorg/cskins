@@ -1,11 +1,10 @@
 name: Package and Release
 
 on:
-    workflow_dispatch: # 允许手动触发 (用于正式版)
+    workflow_dispatch:
     push:
-        branches: [main] # 推送到 main 分支时触发 (用于测试版)
+        branches: [main]
 
-# 授予创建 Release 和删除 Tag 的权限
 permissions:
     contents: write
 
@@ -70,8 +69,8 @@ jobs:
                     # 压缩包内部的目标目录名
                     TARGET_NAME="${PACKAGES[$SOURCE_DIR]}"
 
-                    # 上传的文件名应与目标名称一致
-                    ZIP_FILE="${TARGET_NAME}.zip"
+                    # (最终需求) 上传的文件名使用 .cskin 后缀
+                    ZIP_FILE="${TARGET_NAME}.cskin"
 
                     echo "📦 正在打包: ${SOURCE_DIR} -> ${TARGET_NAME} -> ${ZIP_FILE}"
 
@@ -83,6 +82,7 @@ jobs:
                       echo "   Step 2/3: 压缩 ${TARGET_NAME} 为 ${ZIP_FILE}"
                       # -9qr: 最大压缩率、安静模式、递归目录
                       # "${TARGET_NAME}/": 确保将 ${TARGET_NAME} 目录本身压缩进去
+                      # zip 命令不在乎后缀名，它仍会创建 zip 格式文件
                       zip -9qr "${ZIP_FILE}" "${TARGET_NAME}/"
 
                       echo "   Step 3/3: 清理临时目录 ${TARGET_NAME}"
@@ -132,9 +132,9 @@ jobs:
 
                     echo "✅ 发行版 ${VERSION} 创建成功！"
 
-                    # 清理临时文件
+                    # 清理临时文件 (更新后缀)
                     echo "🧹 正在清理打包文件..."
-                    rm -f ./*.zip
+                    rm -f ./*.cskin
                     echo "✅ 清理完成"
                   else
                     echo "❌ 没有找到任何可打包的目录，跳过发布"
