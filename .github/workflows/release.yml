@@ -1,10 +1,11 @@
 name: Package and Release
 
 on:
-    workflow_dispatch:
+    workflow_dispatch: # 允许手动触发 (用于正式版)
     push:
-        branches: [main]
+        branches: [main] # 推送到 main 分支时触发 (用于测试版)
 
+# 授予创建 Release 和删除 Tag 的权限
 permissions:
     contents: write
 
@@ -16,52 +17,79 @@ jobs:
             - name: 🚚 检出代码
               uses: actions/checkout@v4
 
-            - name: 📦 打包并强制发布版本
+            - name: 📦 打包并发布版本
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                   TZ: Asia/Shanghai
               run: |
                   echo "💡 开始打包多目录版本..."
 
-                  # 定义目录映射 (源目录 -> 目标压缩包名称)
+                  # 定义目录映射 (源目录 -> 压缩包内部的目标目录名)
                   declare -A PACKAGES=(
                     ["wechat"]="元·微信·绿"
                   )
 
                   # --- 1. 定义版本和发布变量 ---
-                  REPO_NAME="${{ github.repository }}"
-                  PROJECT_NAME="${REPO_NAME#*/}"
 
-                  # 根据触发事件决定版本号和发布类型
+                  # (需求 4) 根据触发事件决定版本号
                   if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
                     # 手动触发：正式版
-                    VERSION="v1.0.0.$(date +%Y%m%d)"
+                    VERSION_BASE="v1.0.0.$(date +%Y%m%d)"
                     RELEASE_TYPE="正式版"
-                    PRERELEASE_FLAG="" # 正式版不是预发布
+                    PRERELEASE_FLAG=""
+
+                    echo "ℹ️ 检测到手动触发 (正式版)，检查 ${VERSION_BASE}..."
+                    # 检查基于日期的版本是否已存在
+                    if gh release view "${VERSION_BASE}" >/dev/null 2>&1; then
+                      echo "⚠️ 正式版 ${VERSION_BASE} 已存在。"
+                      # (需求 4) 如果存在，附加时和分
+                      VERSION="${VERSION_BASE}.$(date +%H%M)"
+                      echo "💡 将创建带时间戳的新版本: ${VERSION}"
+                    else
+                      # 如果不存在，使用基础版本号
+                      VERSION="${VERSION_BASE}"
+                      echo "✅ ${VERSION_BASE} 是一个新版本。"
+                    fi
+
                   else
-                    # 自动触发：测试版
+                    # 自动触发：测试版 (保持覆盖逻辑)
                     VERSION="v1.0.0.$(date +%Y%m%d)-beta"
                     RELEASE_TYPE="测试版"
-                    PRERELEASE_FLAG="--prerelease" # 测试版标记为预发布
+                    PRERELEASE_FLAG="--prerelease"
                   fi
 
-                  # 优化后的发布标题格式，例如: "cskins - v1.0.0.20251124 (正式版)"
-                  RELEASE_TITLE="${PROJECT_NAME} - ${VERSION} (${RELEASE_TYPE})"
+                  # (需求 3) 优化后的发布标题 (不含项目名)
+                  RELEASE_TITLE="${VERSION} (${RELEASE_TYPE})"
                   echo "🏷️ 准备发布: ${RELEASE_TITLE}"
 
-                  # --- 2. 循环打包 ---
+                  # --- 2. 循环打包 (实现需求 1 和 2) ---
                   ZIP_FILES=()
-                  PACKAGE_NOTES_LIST="" # 用于 Release Notes 的包列表
+                  PACKAGE_NOTES_LIST=""
 
                   for SOURCE_DIR in "${!PACKAGES[@]}"; do
+                    # 压缩包内部的目标目录名
                     TARGET_NAME="${PACKAGES[$SOURCE_DIR]}"
-                    ZIP_FILE="${TARGET_NAME}.zip"
 
-                    echo "📦 正在打包: ${SOURCE_DIR} -> ${ZIP_FILE}"
+                    # (需求 1) 强制命名上传文件为 default.zip
+                    ZIP_FILE="default.zip"
+
+                    echo "📦 正在打包: ${SOURCE_DIR} -> ${TARGET_NAME} -> ${ZIP_FILE}"
 
                     if [ -d "${SOURCE_DIR}" ]; then
-                      zip -9qr "${ZIP_FILE}" "${SOURCE_DIR}/"
-                      echo "✅ ${ZIP_FILE} 打包完成"
+                      # (需求 2) 解决压缩包内部目录命名问题
+                      echo "   Step 1/3: 复制 ${SOURCE_DIR} 到临时目录 ${TARGET_NAME}"
+                      cp -r "${SOURCE_DIR}" "${TARGET_NAME}"
+
+                      echo "   Step 2/3: 压缩 ${TARGET_NAME} 为 ${ZIP_FILE}"
+                      # -9qr: 最大压缩率、安静模式、递归目录
+                      # "${TARGET_NAME}/": 确保将 ${TARGET_NAME} 目录本身压缩进去
+                      zip -9qr "${ZIP_FILE}" "${TARGET_NAME}/"
+
+                      echo "   Step 3/3: 清理临时目录 ${TARGET_NAME}"
+                      rm -rf "${TARGET_NAME}"
+
+                      echo "✅ ${ZIP_FILE} 打包完成 (内部目录: ${TARGET_NAME})"
+
                       ZIP_FILES+=("${ZIP_FILE}")
                       PACKAGE_NOTES_LIST+="- \`${ZIP_FILE}\`: ${TARGET_NAME} 配置包\n"
                     else
@@ -77,20 +105,15 @@ jobs:
                     COMMIT_SHA_SHORT=$(echo "${{ github.sha }}" | cut -c 1-7)
                     COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
 
-                    # --- 方案一：强制覆盖逻辑 ---
-                    # 仅在自动触发 (测试版) 时执行删除操作
+                    # (方案一) 强制覆盖逻辑：仅在自动触发 (测试版) 时执行
                     if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
                       echo "🔄 (方案一) 检测到测试版，将强制覆盖旧版 ${VERSION}..."
-                      # 1. 删除 Release
-                      # 2. --cleanup-tag 会同时删除与该 Release 关联的 Git Tag
-                      # 3. --yes 会跳过所有确认提示
-                      # 4. || true 会确保在 Release/Tag 不存在时 (例如当天第一次运行) 脚本也不会失败
+                      # --cleanup-tag 会同时删除 Release 和关联的 Tag
                       gh release delete "${VERSION}" --cleanup-tag --yes || true
                       echo "✅ 旧版 ${VERSION} (Release 和 Tag) 清理完毕（如果存在）"
                     else
-                      echo "ℹ️ 检测到正式版，将创建新版本。如果 ${VERSION} 已存在，此步骤将按预期失败。"
+                      echo "ℹ️ 检测到正式版，将按版本号 ${VERSION} 创建新版本。"
                     fi
-                    # --- 强制覆盖逻辑结束 ---
 
                     # 使用 echo -e 和管道处理多行 Release Notes
                     echo -e "**发布日期**: $(date +"%Y年%m月%d日 %H:%M") (${TZ})\n" \
