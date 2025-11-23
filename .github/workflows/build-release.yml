@@ -23,7 +23,6 @@ jobs:
         run: |
           echo "💡 开始打包多目录版本..."
 
-          # 定义目录映射 (源目录 -> 目标压缩包名称)
           declare -A PACKAGES=(
             ["wechat"]="元·微信·绿"
           )
@@ -46,9 +45,8 @@ jobs:
           RELEASE_TITLE="${PROJECT_NAME} ${VERSION} ${RELEASE_TYPE}"
           echo "🏷️ 准备发布: ${RELEASE_TITLE}"
 
-          # --- 2. 循环打包 ---
           ZIP_FILES=()
-          PACKAGE_NOTES_LIST="" # 用于 Release Notes 的包列表
+          PACKAGE_NOTES_LIST=""
 
           for SOURCE_DIR in "${!PACKAGES[@]}"; do
             TARGET_NAME="${PACKAGES[$SOURCE_DIR]}"
@@ -57,31 +55,22 @@ jobs:
             echo "📦 正在打包: ${SOURCE_DIR} -> ${ZIP_FILE}"
 
             if [ -d "${SOURCE_DIR}" ]; then
-              # -9 提供最大压缩率, -q 安静模式, -r 递归目录
               zip -9qr "${ZIP_FILE}" "${SOURCE_DIR}/"
               echo "✅ ${ZIP_FILE} 打包完成"
 
-              # 记录文件用于发布
               ZIP_FILES+=("${ZIP_FILE}")
 
-              # 为 Release Notes 添加条目
-              # 使用 \`..._ \` 来确保文件名中的空格和特殊字符正确显示
               PACKAGE_NOTES_LIST+="- \`${ZIP_FILE}\`: ${TARGET_NAME} 配置包\n"
             else
               echo "⚠️ 目录 ${SOURCE_DIR} 不存在，跳过"
             fi
           done
 
-          # --- 3. 检查是否有文件并创建 Release ---
           if [ ${#ZIP_FILES[@]} -gt 0 ]; then
             echo "🚀 正在准备 Release Notes..."
 
-            # 获取简短的 Commit SHA 和链接
             COMMIT_SHA_SHORT=$(echo "${{ github.sha }}" | cut -c 1-7)
             COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
-
-            # 使用 echo -e 和管道处理多行 Release Notes
-            # 这是最健壮的方式，可以保留所有换行和 Markdown 格式
             echo -e "**发布日期**: $(date +"%Y年%m月%d日 %H:%M") (${TZ})\n" \
             "\n### 📦 包含内容\n" \
             "${PACKAGE_NOTES_LIST}" \
@@ -93,11 +82,10 @@ jobs:
                 "${ZIP_FILES[@]}" \
                 --title "${RELEASE_TITLE}" \
                 --notes-file - \
-                ${PRERELEASE_FLAG} # 添加预发布标志
+                ${PRERELEASE_FLAG}
 
             echo "✅ 发行版 ${VERSION} 创建成功！"
 
-            # 清理临时文件
             echo "🧹 正在清理打包文件..."
             rm -f ./*.zip
             echo "✅ 清理完成"
