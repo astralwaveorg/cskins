@@ -26,9 +26,9 @@ local sumHeights(arr) = (
   // 杂项设置
   // 键盘高度，建议统一使用同一单位，不要混用
   '竖屏': {
-    'preedit高度': '2.3vh',
+    'preedit高度': '2.1vh',
     'toolbar高度': '4.5vh',
-    'keyboard高度': '26vh',
+    'keyboard高度': '25.2vh',
     '符号键盘高度': sumHeights([
       self['toolbar高度'],
       self['keyboard高度'],
