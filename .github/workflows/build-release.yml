@@ -1,77 +1,83 @@
-name: Build and Release Packages
+name: Package and Release
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
 
-env:
-  PACKAGE_MAPPINGS: |
-    wechat:元·微信·绿
-    # 添加更多皮肤
+permissions:
+  contents: write
 
 jobs:
-  build-and-release:
+  build-release:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: 🚚 检出代码
         uses: actions/checkout@v4
 
-      - name: Setup packages mapping
-        id: setup
+      - name: 📦 打包并发布多目录版本
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TZ: Asia/Shanghai
         run: |
-          # 定义包映射
-          cat << EOF > package_mappings.txt
-          wechat:元·微信·绿
-          alipay:元·支付宝·蓝
-          douyin:元·抖音·黑
-          EOF
+          echo "💡 开始打包多目录版本..."
 
-      - name: Process packages
-        id: process
-        run: |
-          # 读取包映射并处理
-          while IFS=: read -r source_dir target_name; do
-            if [[ -z "$source_dir" || "$source_dir" == \#* ]]; then
-              continue
-            fi
+          # 定义目录映射
+          declare -A PACKAGES=(
+            ["wechat"]="元·微信·绿"
+          )
 
-            echo "Processing: $source_dir -> $target_name"
-
-            if [ -d "$source_dir" ]; then
-              # 直接打包，不重命名目录
-              zip_file="${target_name}.zip"
-              zip -r "$zip_file" "$source_dir/"
-              echo "Created $zip_file"
-
-              # 记录文件到列表
-              echo "$zip_file" >> zip_files.txt
-            else
-              echo "Warning: Directory $source_dir not found"
-            fi
-          done < package_mappings.txt
-
-          # 输出文件列表
-          if [ -f zip_files.txt ]; then
-            files_list=$(cat zip_files.txt | tr '\n' ' ')
-            echo "files_list=$files_list" >> $GITHUB_OUTPUT
+          # 生成版本标签
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            # 手动触发时使用时间标签
+            NEW_TAG=$(date +v%y.%m.%d-%H%M)
+            echo "🏷️ 生成新标签 (手动触发): ${NEW_TAG}"
+          else
+            # 自动触发时使用提交SHA前8位
+            NEW_TAG="auto-$(echo ${{ github.sha }} | cut -c1-8)"
+            echo "🏷️ 生成新标签 (自动触发): ${NEW_TAG}"
           fi
 
-      - name: List created files
-        run: |
-          echo "Created zip files:"
-          ls -la *.zip 2>/dev/null || echo "No zip files found"
+          # 创建发布说明
+          RELEASE_NOTES="多目录打包发行版 ${NEW_TAG}\n\n包含以下目录的独立压缩包：\n"
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-        with:
-          files: ${{ steps.process.outputs.files_list }}
-          name: Release ${{ github.sha }}
-          tag_name: ${{ github.sha }}
-          body: |
-            自动构建的多包发布
-            - 提交: ${{ github.sha }}
-            - 时间: ${{ github.event.head_commit.timestamp }}
+          # 打包每个目录
+          for SOURCE_DIR in "${!PACKAGES[@]}"; do
+            TARGET_NAME="${PACKAGES[$SOURCE_DIR]}"
+            ZIP_FILE="${TARGET_NAME}.zip"
+
+            echo "📦 正在打包: ${SOURCE_DIR} -> ${ZIP_FILE}"
+
+            if [ -d "${SOURCE_DIR}" ]; then
+              # 创建压缩包
+              zip -9qr "${ZIP_FILE}" "${SOURCE_DIR}"/
+              echo "✅ ${ZIP_FILE} 打包完成"
+
+              # 添加到发布说明
+              RELEASE_NOTES+="\n- **${ZIP_FILE}**: ${TARGET_NAME} 配置包"
+            else
+              echo "⚠️ 目录 ${SOURCE_DIR} 不存在，跳过"
+            fi
+          done
+
+          # 检查是否有打包成功的文件
+          if ls *.zip 1> /dev/null 2>&1; then
+            echo "🚀 正在创建 GitHub Release..."
+
+            # 创建发布
+            gh release create "${NEW_TAG}" \
+              ./*.zip \
+              --title "多目录发行版 ${NEW_TAG}" \
+              --notes "${RELEASE_NOTES}"
+
+            echo "✅ 发行版 ${NEW_TAG} 创建成功！"
+
+            # 清理临时文件
+            echo "🧹 正在清理打包文件..."
+            rm -f ./*.zip
+            echo "✅ 清理完成"
+          else
+            echo "❌ 没有找到任何可打包的目录，跳过发布"
+            exit 1
+          fi
