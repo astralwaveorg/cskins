@@ -1,0 +1,118 @@
+name: Package and Release
+
+on:
+    workflow_dispatch:
+    push:
+        branches: [main]
+
+permissions:
+    contents: write
+
+jobs:
+    build-release:
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: 🚚 检出代码
+              uses: actions/checkout@v4
+
+            - name: 📦 打包并强制发布版本
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  TZ: Asia/Shanghai
+              run: |
+                  echo "💡 开始打包多目录版本..."
+
+                  # 定义目录映射 (源目录 -> 目标压缩包名称)
+                  declare -A PACKAGES=(
+                    ["wechat"]="元·微信·绿"
+                  )
+
+                  # --- 1. 定义版本和发布变量 ---
+                  REPO_NAME="${{ github.repository }}"
+                  PROJECT_NAME="${REPO_NAME#*/}"
+
+                  # 根据触发事件决定版本号和发布类型
+                  if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+                    # 手动触发：正式版
+                    VERSION="v1.0.0.$(date +%Y%m%d)"
+                    RELEASE_TYPE="正式版"
+                    PRERELEASE_FLAG="" # 正式版不是预发布
+                  else
+                    # 自动触发：测试版
+                    VERSION="v1.0.0.$(date +%Y%m%d)-beta"
+                    RELEASE_TYPE="测试版"
+                    PRERELEASE_FLAG="--prerelease" # 测试版标记为预发布
+                  fi
+
+                  # 优化后的发布标题格式，例如: "cskins - v1.0.0.20251124 (正式版)"
+                  RELEASE_TITLE="${PROJECT_NAME} - ${VERSION} (${RELEASE_TYPE})"
+                  echo "🏷️ 准备发布: ${RELEASE_TITLE}"
+
+                  # --- 2. 循环打包 ---
+                  ZIP_FILES=()
+                  PACKAGE_NOTES_LIST="" # 用于 Release Notes 的包列表
+
+                  for SOURCE_DIR in "${!PACKAGES[@]}"; do
+                    TARGET_NAME="${PACKAGES[$SOURCE_DIR]}"
+                    ZIP_FILE="${TARGET_NAME}.zip"
+
+                    echo "📦 正在打包: ${SOURCE_DIR} -> ${ZIP_FILE}"
+
+                    if [ -d "${SOURCE_DIR}" ]; then
+                      zip -9qr "${ZIP_FILE}" "${SOURCE_DIR}/"
+                      echo "✅ ${ZIP_FILE} 打包完成"
+                      ZIP_FILES+=("${ZIP_FILE}")
+                      PACKAGE_NOTES_LIST+="- \`${ZIP_FILE}\`: ${TARGET_NAME} 配置包\n"
+                    else
+                      echo "⚠️ 目录 ${SOURCE_DIR} 不存在，跳过"
+                    fi
+                  done
+
+                  # --- 3. 检查是否有文件并创建 Release ---
+                  if [ ${#ZIP_FILES[@]} -gt 0 ]; then
+                    echo "🚀 正在准备 Release Notes..."
+
+                    # 获取简短的 Commit SHA 和链接
+                    COMMIT_SHA_SHORT=$(echo "${{ github.sha }}" | cut -c 1-7)
+                    COMMIT_URL="${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}"
+
+                    # --- 方案一：强制覆盖逻辑 ---
+                    # 仅在自动触发 (测试版) 时执行删除操作
+                    if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+                      echo "🔄 (方案一) 检测到测试版，将强制覆盖旧版 ${VERSION}..."
+                      # 1. 删除 Release
+                      # 2. --cleanup-tag 会同时删除与该 Release 关联的 Git Tag
+                      # 3. --yes 会跳过所有确认提示
+                      # 4. || true 会确保在 Release/Tag 不存在时 (例如当天第一次运行) 脚本也不会失败
+                      gh release delete "${VERSION}" --cleanup-tag --yes || true
+                      echo "✅ 旧版 ${VERSION} (Release 和 Tag) 清理完毕（如果存在）"
+                    else
+                      echo "ℹ️ 检测到正式版，将创建新版本。如果 ${VERSION} 已存在，此步骤将按预期失败。"
+                    fi
+                    # --- 强制覆盖逻辑结束 ---
+
+                    # 使用 echo -e 和管道处理多行 Release Notes
+                    echo -e "**发布日期**: $(date +"%Y年%m月%d日 %H:%M") (${TZ})\n" \
+                    "\n### 📦 包含内容\n" \
+                    "${PACKAGE_NOTES_LIST}" \
+                    "\n### 🔄 更新日志\n" \
+                    "- 自动构建于提交: [\`${COMMIT_SHA_SHORT}\`](${COMMIT_URL})\n" \
+                    "- 触发者: @${{ github.actor }}\n" \
+                    "- 包含 ${#ZIP_FILES[@]} 个配置包" \
+                    | gh release create "${VERSION}" \
+                        "${ZIP_FILES[@]}" \
+                        --title "${RELEASE_TITLE}" \
+                        --notes-file - \
+                        ${PRERELEASE_FLAG} # 添加预发布标志
+
+                    echo "✅ 发行版 ${VERSION} 创建成功！"
+
+                    # 清理临时文件
+                    echo "🧹 正在清理打包文件..."
+                    rm -f ./*.zip
+                    echo "✅ 清理完成"
+                  else
+                    echo "❌ 没有找到任何可打包的目录，跳过发布"
+                    exit 1
+                  fi
