@@ -70,8 +70,8 @@ jobs:
                     # 压缩包内部的目标目录名
                     TARGET_NAME="${PACKAGES[$SOURCE_DIR]}"
 
-                    # (需求 1) 强制命名上传文件为 default.zip
-                    ZIP_FILE="default.zip"
+                    # 上传的文件名应与目标名称一致
+                    ZIP_FILE="${TARGET_NAME}.zip"
 
                     echo "📦 正在打包: ${SOURCE_DIR} -> ${TARGET_NAME} -> ${ZIP_FILE}"
 
@@ -122,6 +122,7 @@ jobs:
                     "\n### 🔄 更新日志\n" \
                     "- 自动构建于提交: [\`${COMMIT_SHA_SHORT}\`](${COMMIT_URL})\n" \
                     "- 触发者: @${{ github.actor }}\n" \
+                    "- Githube 地址： [${{ github.repository }}](https://github.com/${{ github.repository }})\n" \
                     "- 包含 ${#ZIP_FILES[@]} 个配置包" \
                     | gh release create "${VERSION}" \
                         "${ZIP_FILES[@]}" \
