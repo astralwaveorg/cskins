@@ -2,9 +2,9 @@ name: Build and Release Packages
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 env:
   PACKAGE_MAPPINGS: |
@@ -14,52 +14,64 @@ env:
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Process all packages
-      id: process-packages
-      run: |
-        echo "ZIP_FILES=" > zip_files.txt
-        
-        echo "$PACKAGE_MAPPINGS" | while IFS=: read -r source_dir target_name; do
-          if [[ -z "$source_dir" || "$source_dir" == \#* ]]; then
-            continue
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup packages mapping
+        id: setup
+        run: |
+          # 定义包映射
+          cat << EOF > package_mappings.txt
+          wechat:元·微信·绿
+          alipay:元·支付宝·蓝
+          douyin:元·抖音·黑
+          EOF
+
+      - name: Process packages
+        id: process
+        run: |
+          # 读取包映射并处理
+          while IFS=: read -r source_dir target_name; do
+            if [[ -z "$source_dir" || "$source_dir" == \#* ]]; then
+              continue
+            fi
+
+            echo "Processing: $source_dir -> $target_name"
+
+            if [ -d "$source_dir" ]; then
+              # 直接打包，不重命名目录
+              zip_file="${target_name}.zip"
+              zip -r "$zip_file" "$source_dir/"
+              echo "Created $zip_file"
+
+              # 记录文件到列表
+              echo "$zip_file" >> zip_files.txt
+            else
+              echo "Warning: Directory $source_dir not found"
+            fi
+          done < package_mappings.txt
+
+          # 输出文件列表
+          if [ -f zip_files.txt ]; then
+            files_list=$(cat zip_files.txt | tr '\n' ' ')
+            echo "files_list=$files_list" >> $GITHUB_OUTPUT
           fi
-          
-          echo "Processing: $source_dir -> $target_name"
-          
-          if [ -d "$source_dir" ]; then
-            mv "$source_dir" "$target_name"
-            echo "Renamed $source_dir to $target_name"
-            
-            zip_file="${target_name}.zip"
-            zip -r "$zip_file" "$target_name/"
-            echo "Created $zip_file"
-            
-            echo "ZIP_FILES=$ZIP_FILES $zip_file" >> zip_files.txt
-          else
-            echo "Warning: Directory $source_dir not found, skipping"
-          fi
-        done
-        
-        source zip_files.txt
-        echo "zip_files<<EOF" >> $GITHUB_OUTPUT
-        echo "$ZIP_FILES" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
-      
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
-      with:
-        files: ${{ steps.process-packages.outputs.zip_files }}
-        name: Release ${{ github.sha }}
-        tag_name: ${{ github.sha }}
-        body: |
-          - 提交: ${{ github.sha }}
-          - 时间: ${{ github.event.head_commit.timestamp }}
-          - 包含的包: ${{ env.PACKAGE_MAPPINGS }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List created files
+        run: |
+          echo "Created zip files:"
+          ls -la *.zip 2>/dev/null || echo "No zip files found"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+        with:
+          files: ${{ steps.process.outputs.files_list }}
+          name: Release ${{ github.sha }}
+          tag_name: ${{ github.sha }}
+          body: |
+            自动构建的多包发布
+            - 提交: ${{ github.sha }}
+            - 时间: ${{ github.event.head_commit.timestamp }}
