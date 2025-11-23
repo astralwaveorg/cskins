@@ -28,21 +28,27 @@ jobs:
             ["wechat"]="元·微信·绿"
           )
 
-          # 生成版本标签
+          # 获取仓库名称作为项目名
+          REPO_NAME="${{ github.repository }}"
+          PROJECT_NAME="${REPO_NAME#*/}"
+
+          # 生成标准版本号
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            # 手动触发时使用时间标签
-            NEW_TAG=$(date +v%y.%m.%d-%H%M)
-            echo "🏷️ 生成新标签 (手动触发): ${NEW_TAG}"
+            # 手动触发：正式版本 v1.0.0.20241124
+            VERSION="v1.0.0.$(date +%Y%m%d)"
+            RELEASE_TYPE="正式版"
           else
-            # 自动触发时使用提交SHA前8位
-            NEW_TAG="auto-$(echo ${{ github.sha }} | cut -c1-8)"
-            echo "🏷️ 生成新标签 (自动触发): ${NEW_TAG}"
+            # 自动触发：开发版本 v1.0.0.20241124-beta
+            VERSION="v1.0.0.$(date +%Y%m%d)-beta"
+            RELEASE_TYPE="测试版"
           fi
 
-          # 创建发布说明
-          RELEASE_NOTES="多目录打包发行版 ${NEW_TAG}\n\n包含以下目录的独立压缩包：\n"
+          echo "🏷️ 生成版本号: ${VERSION} (${RELEASE_TYPE})"
 
+          # 创建发布说明
+          RELEASE_NOTES="## ${PROJECT_NAME} ${VERSION} ${RELEASE_TYPE}； **发布日期**: $(date +"%Y年%m月%d日 %H:%M")； ### 📦 包含内容"
           # 打包每个目录
+          ZIP_FILES=()
           for SOURCE_DIR in "${!PACKAGES[@]}"; do
             TARGET_NAME="${PACKAGES[$SOURCE_DIR]}"
             ZIP_FILE="${TARGET_NAME}.zip"
@@ -54,25 +60,26 @@ jobs:
               zip -9qr "${ZIP_FILE}" "${SOURCE_DIR}"/
               echo "✅ ${ZIP_FILE} 打包完成"
 
+              # 记录文件
+              ZIP_FILES+=("${ZIP_FILE}")
+
               # 添加到发布说明
-              RELEASE_NOTES+="\n- **${ZIP_FILE}**: ${TARGET_NAME} 配置包"
+              RELEASE_NOTES+="- **${ZIP_FILE}**: ${TARGET_NAME} 配置包\n"
             else
               echo "⚠️ 目录 ${SOURCE_DIR} 不存在，跳过"
             fi
           done
 
+          RELEASE_NOTES+="### 🔄 更新日志；- 自动构建于提交: \`${{ github.sha }}\` ； - 包含 ${#ZIP_FILES[@]} 个配置包"
           # 检查是否有打包成功的文件
-          if ls *.zip 1> /dev/null 2>&1; then
+          if [ ${#ZIP_FILES[@]} -gt 0 ]; then
             echo "🚀 正在创建 GitHub Release..."
-
             # 创建发布
-            gh release create "${NEW_TAG}" \
-              ./*.zip \
-              --title "多目录发行版 ${NEW_TAG}" \
+            gh release create "${VERSION}" \
+              "${ZIP_FILES[@]}" \
+              --title "${PROJECT_NAME} ${VERSION} ${RELEASE_TYPE}" \
               --notes "${RELEASE_NOTES}"
-
-            echo "✅ 发行版 ${NEW_TAG} 创建成功！"
-
+            echo "✅ 发行版 ${VERSION} 创建成功！"
             # 清理临时文件
             echo "🧹 正在清理打包文件..."
             rm -f ./*.zip
